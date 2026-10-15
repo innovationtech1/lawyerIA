@@ -132,13 +132,19 @@ export default async function handler(req, res) {
     });
 
     if (!r.ok) {
-      console.error('Error de la API', r.status, await r.text().catch(() => ''));
-      const busy = r.status === 429 || r.status === 529;
-      return send(res, 502, {
-        error: busy
-          ? 'El asistente está ocupado. Intente de nuevo en un momento.'
-          : 'No se pudo obtener respuesta del asistente. Intente de nuevo.',
-      });
+      const detail = await r.text().catch(() => '');
+      console.error('Error de la API', r.status, detail);
+      let error = `No se pudo obtener respuesta del asistente (código ${r.status}). Intente de nuevo.`;
+      if (r.status === 429 || r.status === 529) {
+        error = 'El asistente está ocupado. Intente de nuevo en un momento.';
+      } else if (r.status === 401 || r.status === 403) {
+        error = 'Configuración pendiente: la clave de la API no es válida (código 401). Avise al despacho.';
+      } else if (r.status === 404) {
+        error = 'Configuración pendiente: el modelo de IA no está disponible (código 404). Avise al despacho.';
+      } else if (r.status === 400 && /credit balance/i.test(detail)) {
+        error = 'Configuración pendiente: la cuenta de la IA no tiene saldo. Avise al despacho.';
+      }
+      return send(res, 502, { error });
     }
 
     const data = await r.json();

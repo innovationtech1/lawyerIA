@@ -40,6 +40,7 @@ if (demo) {
 
 const { default: chat } = await import('../api/chat.js');
 const { default: config } = await import('../api/config.js');
+const { default: health } = await import('../api/health.js');
 
 const types = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -49,6 +50,7 @@ const types = {
 
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  if (url.pathname === '/api/health') return health(req, res);
   if (url.pathname === '/api/chat' || url.pathname === '/api/config') {
     let raw = '';
     for await (const chunk of req) raw += chunk;
