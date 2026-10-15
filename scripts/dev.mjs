@@ -20,6 +20,7 @@ if (fs.existsSync('.env')) {
 
 const demo = process.argv.includes('--demo');
 if (demo) {
+  process.env.AI_PROVIDER = 'anthropic'; // el modo demo simula esta API
   process.env.ANTHROPIC_API_KEY = 'demo';
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {

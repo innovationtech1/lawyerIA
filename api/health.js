@@ -1,14 +1,19 @@
 // Diagnóstico: indica si la configuración está activa, sin revelar ningún valor secreto.
 // Abra /api/health en el navegador para revisarlo.
 
+import { providerConfig } from './chat.js';
+
 export default function handler(req, res) {
-  const key = process.env.ANTHROPIC_API_KEY || '';
+  const cfg = providerConfig();
+  const keyPrefix = cfg.provider === 'groq' ? 'gsk_' : 'sk-ant-api';
   const status = {
-    ok: Boolean(key) && key.startsWith('sk-ant-api'),
-    keyConfigured: Boolean(key),
-    keyLooksLikeApiKey: key.startsWith('sk-ant-api'),
+    ok: Boolean(cfg.key) && cfg.key.startsWith(keyPrefix),
+    provider: cfg.provider,
+    model: cfg.model,
+    keyVariable: cfg.keyName,
+    keyConfigured: Boolean(cfg.key),
+    keyFormatOk: cfg.key.startsWith(keyPrefix),
     firmNameSet: Boolean(process.env.FIRM_NAME),
-    model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
     environment: process.env.VERCEL_ENV || 'local',
     commit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7),
     checkedAt: new Date().toISOString(),

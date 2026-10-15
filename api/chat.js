@@ -1,16 +1,28 @@
 // Función del servidor (Vercel): recibe la conversación desde la página,
-// agrega las instrucciones de system_prompt.txt y consulta a Claude.
-// La clave de la API vive solo aquí, en la variable ANTHROPIC_API_KEY.
+// agrega las instrucciones de system_prompt.txt y consulta a la IA.
+//
+// Proveedores disponibles (variable AI_PROVIDER):
+//   groq      → gratis, modelo de código abierto (GROQ_API_KEY)   ← predeterminado
+//   anthropic → Claude, de pago (ANTHROPIC_API_KEY)
+// Las claves viven solo aquí, en variables de entorno; nunca llegan al navegador.
 
 import fs from 'node:fs';
 import path from 'node:path';
 
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5';
 const MAX_MESSAGES = 40;      // mensajes por conversación
 const MAX_CHARS = 4000;       // caracteres por mensaje
 const RATE_LIMIT = 30;        // solicitudes por IP...
 const RATE_WINDOW_MS = 10 * 60 * 1000; // ...cada 10 minutos
+
+export function providerConfig() {
+  const groqKey = process.env.GROQ_API_KEY || '';
+  const anthropicKey = process.env.ANTHROPIC_API_KEY || '';
+  const provider = (process.env.AI_PROVIDER || (groqKey || !anthropicKey ? 'groq' : 'anthropic')).toLowerCase();
+  if (provider === 'anthropic') {
+    return { provider, key: anthropicKey, keyName: 'ANTHROPIC_API_KEY', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' };
+  }
+  return { provider: 'groq', key: groqKey, keyName: 'GROQ_API_KEY', model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b' };
+}
 
 const SUMMARY_REQUEST = {
   es: 'Con la información de esta conversación, prepara el informe de elegibilidad para el abogado con esta estructura: 1. Resumen del caso. 2. Datos clave del peticionario y del beneficiario. 3. Categoría probable y si hay espera de visa. 4. Ruta probable (ajuste de estatus o proceso consular) y la razón. 5. Formularios que aplican y orden. 6. Señales de alerta. 7. Documentos faltantes. 8. Preguntas abiertas para el abogado. 9. Aviso: "Evaluación preliminar; requiere revisión del abogado." Si falta información, indícalo en cada punto en lugar de suponer.',
@@ -67,6 +79,66 @@ function validate(body) {
   return null;
 }
 
+// ---------- Proveedores ----------
+
+async function callGroq(cfg, system, messages, summary, signal) {
+  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    signal,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.key}` },
+    body: JSON.stringify({
+      model: cfg.model,
+      messages: [{ role: 'system', content: system }, ...messages],
+      max_completion_tokens: summary ? 4000 : 3000, // incluye el razonamiento interno
+      temperature: 0.3,
+      ...(cfg.model.startsWith('openai/gpt-oss')
+        ? { reasoning_effort: process.env.GROQ_REASONING_EFFORT || 'medium', include_reasoning: false }
+        : {}),
+    }),
+  });
+  if (!r.ok) return { ok: false, status: r.status, detail: await r.text().catch(() => '') };
+  const data = await r.json();
+  const text = String(data.choices?.[0]?.message?.content || '')
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .trim();
+  return { ok: true, text };
+}
+
+async function callAnthropic(cfg, system, messages, summary, signal) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    signal,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': cfg.key,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({ model: cfg.model, max_tokens: summary ? 2500 : 1500, system, messages }),
+  });
+  if (!r.ok) return { ok: false, status: r.status, detail: await r.text().catch(() => '') };
+  const data = await r.json();
+  const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+  return { ok: true, text };
+}
+
+function errorMessage(status, detail) {
+  if (status === 429) {
+    return /per day|daily|TPD|RPD/i.test(detail)
+      ? 'El asistente gratuito alcanzó su límite de uso de hoy. Intente de nuevo mañana o llame al despacho.'
+      : 'El asistente está ocupado. Espere un minuto e intente de nuevo.';
+  }
+  if (status === 529 || status === 503) return 'El asistente está ocupado. Intente de nuevo en un momento.';
+  if (status === 401 || status === 403) return 'Configuración pendiente: la clave de la API no es válida (código 401). Avise al despacho.';
+  if (status === 404) return 'Configuración pendiente: el modelo de IA no está disponible (código 404). Avise al despacho.';
+  if (status === 400 && /credit balance/i.test(detail)) return 'Configuración pendiente: la cuenta de la IA no tiene saldo. Avise al despacho.';
+  if (status === 413 || (status === 400 && /context|too large|too long/i.test(detail))) {
+    return 'La conversación es demasiado larga. Genere el resumen o inicie una nueva conversación.';
+  }
+  return `No se pudo obtener respuesta del asistente (código ${status}). Intente de nuevo.`;
+}
+
+// ---------- Función principal ----------
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -99,14 +171,15 @@ export default async function handler(req, res) {
     return send(res, 400, { error: 'Solicitud inválida.' });
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('Falta la variable ANTHROPIC_API_KEY');
+  const cfg = providerConfig();
+  if (!cfg.key) {
+    console.error(`Falta la variable ${cfg.keyName}`);
     return send(res, 500, { error: 'El asistente no está configurado todavía. Contacte al despacho.' });
   }
 
   let system;
   try {
-    system = systemPrompt() + `\n\nIDIOMA\nLa página está en ${lang === 'en' ? 'inglés' : 'español'}. Responde en el idioma en que escriba el usuario.`;
+    system = systemPrompt() + `\n\nIDIOMA\nLa página está en ${lang === 'en' ? 'inglés' : 'español'}. Responde en el idioma en que escriba el usuario.\n\nFORMATO\nUsa párrafos cortos, listas y **negritas**. No uses tablas.`;
   } catch (err) {
     console.error('No se pudo leer system_prompt.txt', err);
     return send(res, 500, { error: 'Error de configuración del asistente.' });
@@ -115,48 +188,16 @@ export default async function handler(req, res) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 55_000);
   try {
-    const r = await fetch(API_URL, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: summary ? 2500 : 1500,
-        system,
-        messages,
-      }),
-    });
-
-    if (!r.ok) {
-      const detail = await r.text().catch(() => '');
-      console.error('Error de la API', r.status, detail);
-      let error = `No se pudo obtener respuesta del asistente (código ${r.status}). Intente de nuevo.`;
-      if (r.status === 429 || r.status === 529) {
-        error = 'El asistente está ocupado. Intente de nuevo en un momento.';
-      } else if (r.status === 401 || r.status === 403) {
-        error = 'Configuración pendiente: la clave de la API no es válida (código 401). Avise al despacho.';
-      } else if (r.status === 404) {
-        error = 'Configuración pendiente: el modelo de IA no está disponible (código 404). Avise al despacho.';
-      } else if (r.status === 400 && /credit balance/i.test(detail)) {
-        error = 'Configuración pendiente: la cuenta de la IA no tiene saldo. Avise al despacho.';
-      }
-      return send(res, 502, { error });
+    const call = cfg.provider === 'anthropic' ? callAnthropic : callGroq;
+    const result = await call(cfg, system, messages, summary, controller.signal);
+    if (!result.ok) {
+      console.error(`Error de ${cfg.provider}`, result.status, result.detail);
+      return send(res, 502, { error: errorMessage(result.status, result.detail) });
     }
-
-    const data = await r.json();
-    const reply = (data.content || [])
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('\n')
-      .trim();
-    if (!reply) return send(res, 502, { error: 'Respuesta vacía. Intente de nuevo.' });
-    return send(res, 200, { reply });
+    if (!result.text) return send(res, 502, { error: 'Respuesta vacía. Intente de nuevo.' });
+    return send(res, 200, { reply: result.text });
   } catch (err) {
-    console.error('Fallo al consultar la API', err);
+    console.error('Fallo al consultar la IA', err);
     const timeout = err?.name === 'AbortError';
     return send(res, 504, {
       error: timeout

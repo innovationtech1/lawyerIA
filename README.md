@@ -1,14 +1,17 @@
 # Asistente IA de Inmigración Familiar — Instrucciones y Cuestionario
 
-Proyecto de InnovationTECH: asistente de admisión y análisis preliminar de casos migratorios para un despacho de abogados.
+Proyecto de código abierto de InnovationTECH: asistente de admisión y análisis preliminar de casos migratorios para un despacho de abogados. Funciona gratis con Groq y un modelo de IA de código abierto (gpt-oss-120b), y opcionalmente con Claude.
+
+Licencia: [MIT](LICENSE).
 
 ## Archivos
 
 | Archivo | Contenido |
 | --- | --- |
 | `public/` | La página web: chat, aviso legal, temas y resumen para el abogado (`index.html`, `styles.css`, `app.js`) |
-| `api/chat.js` | Servidor que recibe la conversación y consulta a Claude con las instrucciones de `system_prompt.txt` |
+| `api/chat.js` | Servidor que recibe la conversación y consulta a la IA (Groq o Claude) con las instrucciones de `system_prompt.txt` |
 | `api/config.js` | Entrega a la página el nombre y los datos de contacto del despacho |
+| `api/health.js` | Diagnóstico en `/api/health`: muestra si la IA está configurada, sin revelar claves |
 | `system_prompt.txt` | Instrucciones de sistema de la IA (rol, tono y límites éticos) |
 | `scripts/dev.mjs` | Servidor local para probar la página en su computadora |
 | `.env.example` | Lista de variables que debe configurar en Vercel |
@@ -30,21 +33,25 @@ Además:
 
 ## Cómo publicarla en Vercel
 
-1. **Consiga la clave de la API.** Entre a [console.anthropic.com](https://console.anthropic.com), cree una cuenta, agregue un método de pago y cree una clave en *API Keys*. Cópiela; empieza con `sk-ant-`.
+1. **Consiga la clave gratuita de Groq.** Entre a [console.groq.com](https://console.groq.com), cree una cuenta con el plan gratuito y cree una clave en *API Keys*. Cópiela; empieza con `gsk_`.
 2. **Importe el repositorio.** En [vercel.com](https://vercel.com) elija *Add New → Project*, seleccione `innovationtech1/lawyerIA` y presione *Import*. No cambie el *Framework Preset* (debe decir *Other*).
 3. **Agregue las variables.** Antes de *Deploy*, abra *Environment Variables* y agregue:
 
    | Variable | Ejemplo | ¿Obligatoria? |
    | --- | --- | --- |
-   | `ANTHROPIC_API_KEY` | `sk-ant-...` | Sí |
+   | `GROQ_API_KEY` | `gsk_...` | Sí |
    | `FIRM_NAME` | Despacho Martínez & Asociados | Sí |
    | `ATTORNEY_NAME` | Lic. Ana Martínez | Recomendada |
    | `FIRM_PHONE` | +1 (210) 555-0100 | Recomendada |
    | `FIRM_WHATSAPP` | 12105550100 (solo números, con código de país) | Opcional |
    | `FIRM_EMAIL` | contacto@despacho.com | Recomendada |
-   | `ANTHROPIC_MODEL` | claude-sonnet-5-5 | Opcional |
+   | `GROQ_MODEL` | openai/gpt-oss-120b | Opcional |
 
-4. **Publique.** Presione *Deploy*. Cuando termine, abra el enlace y haga una conversación de prueba.
+   **Límite del plan gratuito de Groq:** alrededor de 1,000 consultas y 200,000 tokens al día, lo que alcanza para unas 5 a 10 conversaciones completas. Al llegar al límite, la página avisa al usuario que intente al día siguiente o llame al despacho.
+
+   **Para usar Claude en lugar de Groq** (de pago, más preciso en casos complejos), agregue `AI_PROVIDER` = `anthropic` y `ANTHROPIC_API_KEY` con su clave de [console.anthropic.com](https://console.anthropic.com).
+
+4. **Publique.** Presione *Deploy*. Cuando termine, abra `/api/health` (debe decir `"ok":true`) y haga una conversación de prueba.
 5. **Si cambia una variable después**, vaya a *Deployments*, abra el último y elija *Redeploy* para que tome el cambio.
 
 Cada vez que suba cambios a la rama `main` en GitHub, Vercel publica la nueva versión automáticamente.
@@ -60,7 +67,7 @@ Necesita [Node.js](https://nodejs.org) 20 o más reciente.
 
 - [ ] El abogado revisa y aprueba `system_prompt.txt` y el aviso legal
 - [ ] Probar 5 a 10 casos ficticios y que el abogado valide las respuestas
-- [ ] Poner un límite de gasto mensual en console.anthropic.com (*Settings → Limits*)
+- [ ] Confirmar que el modelo gratuito responde bien los 12 casos de prueba; si no, evaluar Claude
 - [ ] Agregar una política de privacidad del despacho
 - [ ] Conectar un dominio propio en Vercel (*Settings → Domains*)
 
