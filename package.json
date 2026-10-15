@@ -1,0 +1,14 @@
+{
+  "name": "lawyer-ia",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Asistente IA de inmigración familiar para despachos de abogados",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "demo": "node scripts/dev.mjs --demo"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

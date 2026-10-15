@@ -6,8 +6,63 @@ Proyecto de InnovationTECH: asistente de admisión y análisis preliminar de cas
 
 | Archivo | Contenido |
 | --- | --- |
-| `system_prompt.txt` | Instrucciones de sistema listas para pegar en la plataforma de IA |
-| `README.md` | Propósito, cuestionario, señales de alerta, formularios y notas de implementación |
+| `public/` | La página web: chat, aviso legal, temas y resumen para el abogado (`index.html`, `styles.css`, `app.js`) |
+| `api/chat.js` | Servidor que recibe la conversación y consulta a Claude con las instrucciones de `system_prompt.txt` |
+| `api/config.js` | Entrega a la página el nombre y los datos de contacto del despacho |
+| `system_prompt.txt` | Instrucciones de sistema de la IA (rol, tono y límites éticos) |
+| `scripts/dev.mjs` | Servidor local para probar la página en su computadora |
+| `.env.example` | Lista de variables que debe configurar en Vercel |
+
+## Qué hace la página
+
+1. El usuario lee el aviso legal y marca la casilla de aceptación.
+2. Elige un tema: residencia por familia, ciudadanía, Seguro Social u otra pregunta.
+3. Conversa con el asistente, que hace las preguntas del cuestionario un bloque a la vez.
+4. Al final presiona **Resumen para el abogado** y lo copia, lo descarga o lo envía por correo o WhatsApp al despacho.
+
+Además:
+
+- Funciona en español (por defecto) y en inglés, en celular y computadora, con modo claro y oscuro.
+- Oculta automáticamente números que parecen de Seguro Social o A-Number, en la página y en el servidor.
+- No guarda conversaciones: se borran al cerrar la página.
+- Muestra siempre el teléfono del despacho para casos urgentes (detención o audiencia próxima).
+- La clave de la API nunca llega al navegador; solo vive en el servidor.
+
+## Cómo publicarla en Vercel
+
+1. **Consiga la clave de la API.** Entre a [console.anthropic.com](https://console.anthropic.com), cree una cuenta, agregue un método de pago y cree una clave en *API Keys*. Cópiela; empieza con `sk-ant-`.
+2. **Importe el repositorio.** En [vercel.com](https://vercel.com) elija *Add New → Project*, seleccione `innovationtech1/lawyerIA` y presione *Import*. No cambie el *Framework Preset* (debe decir *Other*).
+3. **Agregue las variables.** Antes de *Deploy*, abra *Environment Variables* y agregue:
+
+   | Variable | Ejemplo | ¿Obligatoria? |
+   | --- | --- | --- |
+   | `ANTHROPIC_API_KEY` | `sk-ant-...` | Sí |
+   | `FIRM_NAME` | Despacho Martínez & Asociados | Sí |
+   | `ATTORNEY_NAME` | Lic. Ana Martínez | Recomendada |
+   | `FIRM_PHONE` | +1 (210) 555-0100 | Recomendada |
+   | `FIRM_WHATSAPP` | 12105550100 (solo números, con código de país) | Opcional |
+   | `FIRM_EMAIL` | contacto@despacho.com | Recomendada |
+   | `ANTHROPIC_MODEL` | claude-sonnet-5-5 | Opcional |
+
+4. **Publique.** Presione *Deploy*. Cuando termine, abra el enlace y haga una conversación de prueba.
+5. **Si cambia una variable después**, vaya a *Deployments*, abra el último y elija *Redeploy* para que tome el cambio.
+
+Cada vez que suba cambios a la rama `main` en GitHub, Vercel publica la nueva versión automáticamente.
+
+## Probar en su computadora (opcional)
+
+Necesita [Node.js](https://nodejs.org) 20 o más reciente.
+
+- **Modo demostración (sin clave y sin costo):** `npm run demo` y abra http://localhost:3000
+- **Con la IA real:** copie `.env.example` como `.env`, ponga su clave y ejecute `npm run dev`
+
+## Antes de abrirla al público
+
+- [ ] El abogado revisa y aprueba `system_prompt.txt` y el aviso legal
+- [ ] Probar 5 a 10 casos ficticios y que el abogado valide las respuestas
+- [ ] Poner un límite de gasto mensual en console.anthropic.com (*Settings → Limits*)
+- [ ] Agregar una política de privacidad del despacho
+- [ ] Conectar un dominio propio en Vercel (*Settings → Domains*)
 
 ## Propósito y alcance
 

@@ -1,0 +1,12 @@
+{
+  "name": "Asistente de Inmigración",
+  "short_name": "Inmigración",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f3ee",
+  "theme_color": "#0f1f3a",
+  "lang": "es",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
