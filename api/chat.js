@@ -14,6 +14,12 @@ const MAX_CHARS = 4000;       // caracteres por mensaje
 const RATE_LIMIT = 30;        // solicitudes por IP...
 const RATE_WINDOW_MS = 10 * 60 * 1000; // ...cada 10 minutos
 
+// Ahorro de tokens (plan gratuito de Groq: ~200,000 tokens al día y 8,000 por minuto por modelo).
+// En el chat solo se envían el primer mensaje y los últimos HISTORY_WINDOW mensajes;
+// el resumen para el abogado sí recibe la conversación completa.
+const HISTORY_WINDOW = Number(process.env.HISTORY_WINDOW) || 12;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 export function providerConfig() {
   const groqKey = process.env.GROQ_API_KEY || '';
   const anthropicKey = process.env.ANTHROPIC_API_KEY || '';
@@ -21,7 +27,28 @@ export function providerConfig() {
   if (provider === 'anthropic') {
     return { provider, key: anthropicKey, keyName: 'ANTHROPIC_API_KEY', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' };
   }
-  return { provider: 'groq', key: groqKey, keyName: 'GROQ_API_KEY', model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b' };
+  const fallback = process.env.GROQ_FALLBACK_MODEL ?? 'openai/gpt-oss-20b';
+  return {
+    provider: 'groq',
+    key: groqKey,
+    keyName: 'GROQ_API_KEY',
+    model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+    // Modelo de respaldo con su propio límite diario; "none" lo desactiva.
+    fallbackModel: fallback && fallback !== 'none' ? fallback : null,
+  };
+}
+
+// Recorta la conversación: conserva el primer mensaje (el tema del caso) y los más recientes.
+// El resultado siempre empieza con "user" y alterna roles.
+export function trimHistory(messages, windowSize = HISTORY_WINDOW) {
+  if (messages.length <= windowSize + 1) return messages;
+  let tail = messages.slice(-windowSize);
+  if (tail[0].role !== 'user') tail = tail.slice(1);
+  const note = {
+    role: 'assistant',
+    content: '(Parte anterior de la conversación omitida por brevedad. Si falta un dato decisivo, pregúntelo de nuevo.)',
+  };
+  return [messages[0], note, ...tail];
 }
 
 const SUMMARY_REQUEST = {
@@ -81,27 +108,56 @@ function validate(body) {
 
 // ---------- Proveedores ----------
 
-async function callGroq(cfg, system, messages, summary, signal) {
+async function groqRequest(cfg, model, system, messages, summary, signal) {
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     signal,
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.key}` },
     body: JSON.stringify({
-      model: cfg.model,
+      model,
+      // El mensaje de sistema va siempre primero y sin cambios: Groq guarda en caché
+      // ese inicio común y los tokens en caché no cuentan para el límite.
       messages: [{ role: 'system', content: system }, ...messages],
-      max_completion_tokens: summary ? 4000 : 3000, // incluye el razonamiento interno
+      max_completion_tokens: summary ? 3000 : 1500, // incluye el razonamiento interno
       temperature: 0.3,
-      ...(cfg.model.startsWith('openai/gpt-oss')
-        ? { reasoning_effort: process.env.GROQ_REASONING_EFFORT || 'medium', include_reasoning: false }
+      ...(model.startsWith('openai/gpt-oss')
+        ? { reasoning_effort: process.env.GROQ_REASONING_EFFORT || 'low', include_reasoning: false }
         : {}),
     }),
   });
-  if (!r.ok) return { ok: false, status: r.status, detail: await r.text().catch(() => '') };
+  if (!r.ok) {
+    return {
+      ok: false,
+      status: r.status,
+      retryAfter: Number(r.headers.get('retry-after')) || 0,
+      detail: await r.text().catch(() => ''),
+    };
+  }
   const data = await r.json();
   const text = String(data.choices?.[0]?.message?.content || '')
     .replace(/<think>[\s\S]*?<\/think>/g, '')
     .trim();
-  return { ok: true, text };
+  return { ok: true, text, model };
+}
+
+async function callGroq(cfg, system, messages, summary, signal) {
+  let result = await groqRequest(cfg, cfg.model, system, messages, summary, signal);
+
+  // Límite por minuto con espera corta: esperar y reintentar una vez con el mismo modelo.
+  if (!result.ok && result.status === 429 && result.retryAfter > 0 && result.retryAfter <= 8) {
+    await sleep(result.retryAfter * 1000);
+    result = await groqRequest(cfg, cfg.model, system, messages, summary, signal);
+  }
+
+  // Límite alcanzado o modelo saturado: usar el modelo de respaldo, que tiene su propio límite.
+  if (!result.ok && [429, 503, 498].includes(result.status) && cfg.fallbackModel) {
+    console.warn(`Groq ${result.status} con ${cfg.model}; usando ${cfg.fallbackModel}`);
+    const fb = await groqRequest(cfg, cfg.fallbackModel, system, messages, summary, signal);
+    if (fb.ok) return fb;
+    // Si el respaldo no existe (404), se informa el error original del modelo principal.
+    if (fb.status !== 404) result = fb;
+  }
+  return result;
 }
 
 async function callAnthropic(cfg, system, messages, summary, signal) {
@@ -161,7 +217,8 @@ export default async function handler(req, res) {
   const lang = body.lang === 'en' ? 'en' : 'es';
   const summary = body.mode === 'summary';
 
-  const messages = body.messages.map((m) => ({ role: m.role, content: maskSensitive(m.content) }));
+  let messages = body.messages.map((m) => ({ role: m.role, content: maskSensitive(m.content) }));
+  if (!summary) messages = trimHistory(messages);
   if (summary) {
     if (messages[messages.length - 1].role === 'user') {
       return send(res, 400, { error: 'Solicitud inválida.' });
@@ -179,7 +236,7 @@ export default async function handler(req, res) {
 
   let system;
   try {
-    system = systemPrompt() + `\n\nIDIOMA\nLa página está en ${lang === 'en' ? 'inglés' : 'español'}. Responde en el idioma en que escriba el usuario.\n\nFORMATO\nUsa párrafos cortos, listas y **negritas**. No uses tablas.`;
+    system = systemPrompt() + `\n\nIDIOMA\nLa página está en ${lang === 'en' ? 'inglés' : 'español'}. Responde en el idioma en que escriba el usuario.\n\nFORMATO\nUsa párrafos cortos, listas y **negritas**. No uses tablas.\nSé breve: en cada respuesta, como máximo unas 150 palabras y 3 preguntas. Las explicaciones largas déjalas para el resumen del caso, salvo que el usuario pida más detalle.`;
   } catch (err) {
     console.error('No se pudo leer system_prompt.txt', err);
     return send(res, 500, { error: 'Error de configuración del asistente.' });
@@ -194,7 +251,10 @@ export default async function handler(req, res) {
       console.error(`Error de ${cfg.provider}`, result.status, result.detail);
       return send(res, 502, { error: errorMessage(result.status, result.detail) });
     }
-    if (!result.text) return send(res, 502, { error: 'Respuesta vacía. Intente de nuevo.' });
+    if (!result.text) {
+      console.error('Respuesta vacía', cfg.provider, result.model || cfg.model);
+      return send(res, 502, { error: 'Respuesta vacía. Intente de nuevo.' });
+    }
     return send(res, 200, { reply: result.text });
   } catch (err) {
     console.error('Fallo al consultar la IA', err);

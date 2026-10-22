@@ -47,7 +47,14 @@ Además:
    | `FIRM_EMAIL` | contacto@despacho.com | Recomendada |
    | `GROQ_MODEL` | openai/gpt-oss-120b | Opcional |
 
-   **Límite del plan gratuito de Groq:** alrededor de 1,000 consultas y 200,000 tokens al día, lo que alcanza para unas 5 a 10 conversaciones completas. Al llegar al límite, la página avisa al usuario que intente al día siguiente o llame al despacho.
+   **Límite del plan gratuito de Groq:** 200,000 tokens al día y 8,000 por minuto por modelo. Para estirarlo, el asistente:
+
+   - Razona con esfuerzo bajo (`GROQ_REASONING_EFFORT=low`) y da respuestas breves.
+   - En el chat envía solo el primer mensaje y los últimos 12 (`HISTORY_WINDOW`); el resumen para el abogado sí usa la conversación completa.
+   - Si el modelo principal se queda sin cupo, cambia a `openai/gpt-oss-20b`, que tiene su propio límite (`GROQ_FALLBACK_MODEL`; ponga `none` para desactivarlo).
+   - Si el límite es por minuto y la espera es corta, espera y reintenta solo.
+
+   Con esto alcanza para unas 10 a 18 conversaciones completas al día. Al agotarse ambos modelos, la página avisa al usuario que intente al día siguiente o llame al despacho.
 
    **Para usar Claude en lugar de Groq** (de pago, más preciso en casos complejos), agregue `AI_PROVIDER` = `anthropic` y `ANTHROPIC_API_KEY` con su clave de [console.anthropic.com](https://console.anthropic.com).
 
