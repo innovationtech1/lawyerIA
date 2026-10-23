@@ -67,8 +67,17 @@ Cada vez que suba cambios a la rama `main` en GitHub, Vercel publica la nueva ve
 
 Necesita [Node.js](https://nodejs.org) 20 o más reciente.
 
-- **Modo demostración (sin clave y sin costo):** `npm run demo` y abra http://localhost:3000
-- **Con la IA real:** copie `.env.example` como `.env`, ponga su clave y ejecute `npm run dev`
+No hace falta instalar nada más: el proyecto no tiene dependencias.
+
+| Comando | Qué hace |
+| --- | --- |
+| `npm run dev` | Usa la IA real si encuentra una clave en `.env`; si no hay clave, arranca solo en **modo demostración** |
+| `npm run demo` | Siempre en modo demostración: respuestas de ejemplo, sin clave, sin costo y sin gastar cupo |
+| `npm run live` | Exige la IA real; si falta la clave, se detiene y explica qué hacer |
+
+Para usar la IA real, copie `.env.example` como `.env` y ponga su `GROQ_API_KEY` (gratis en [console.groq.com](https://console.groq.com)).
+
+Al arrancar, la terminal muestra la dirección de la página (por defecto http://localhost:3000), el modo activo y avisos útiles (por ejemplo, una clave con formato incorrecto). Si el puerto 3000 está ocupado, use otro: `PORT=3001 npm run dev`. El diagnóstico en `/api/health` indica `"demo": true` cuando las respuestas son de ejemplo.
 
 ## Antes de abrirla al público
 

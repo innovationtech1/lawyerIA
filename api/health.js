@@ -8,6 +8,7 @@ export default function handler(req, res) {
   const keyPrefix = cfg.provider === 'groq' ? 'gsk_' : 'sk-ant-api';
   const status = {
     ok: Boolean(cfg.key) && cfg.key.startsWith(keyPrefix),
+    ...(process.env.LAWYERIA_DEMO ? { demo: true } : {}),
     provider: cfg.provider,
     model: cfg.model,
     fallbackModel: cfg.fallbackModel || null,
